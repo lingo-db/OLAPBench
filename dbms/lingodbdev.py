@@ -1,5 +1,6 @@
 import os
 import re
+from ast import Index
 
 from dbms.dbms import DBMS, Result, DBMSDescription
 from util import logger, sql
@@ -41,6 +42,13 @@ class LingoDBDev(DBMS):
     @property
     def version(self) -> str:
         return "dev"
+    def _transform_schema(self, schema: dict) -> dict:
+        schema = sql.transform_schema(schema, escape='"', lowercase=self._umbra_planner)
+        for table in schema['tables']:
+            for column in table['columns']:
+                # text is limited to 65KB replace with longtext
+                column['type'] = column['type'].replace('smallint', 'int')
+        return schema
 
     def _create_table_statements(self, schema: dict) -> [str]:
         return sql.create_table_statements(schema)
