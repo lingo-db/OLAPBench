@@ -34,7 +34,8 @@
             "singlestore",
             "sqlserver",
             "umbra",
-            "umbradev"
+            "umbradev",
+            "lingodbdev"
           ]
         },
         "disabled": {
