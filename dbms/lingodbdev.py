@@ -23,15 +23,14 @@ class LingoDBDev(DBMS):
         self.sql = os.path.join(self._bin_dir,"sql")
         os.makedirs(self._db_dir, exist_ok=True)
         self.db = os.path.join(self._lingodb_db, self._database_name)
+        self.db_exists=os.path.exists(self.db)
         logger.log_verbose_dbms("Using lingodb sql binary " + self.sql, self)
         logger.log_verbose_dbms("Starting lingodb with a new database " + self.db, self)
         os.makedirs(self.db, exist_ok=True)
         command = f'{self.sql} {self.db}'
-        self.db_exists = False
         self.process = Process(command, {"LINGODB_EXECUTION_MODE": "SPEED", "LINGODB_SQL_PROMPT": "0",
                                          "LINGODB_SQL_REPORT_TIMES": "1"})
         self.process.start()
-        self._execute("SET persist=1;\n", False)
         return self
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.process is not None:
@@ -98,6 +97,13 @@ class LingoDBDev(DBMS):
         result.rows = -1
 
         return result
+    def load_database(self):
+        if self.db_exists:
+            logger.log_verbose_dbms("Starting lingodb with existing database " + self.db, self)
+        else:
+            logger.log_verbose_dbms("Loading tables " + self.db, self)
+            self._execute("SET persist=1;\n", False)
+            super().load_database()
 
 class LingoDBDevDescription(DBMSDescription):
     @staticmethod
