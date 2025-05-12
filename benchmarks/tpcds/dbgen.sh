@@ -4,24 +4,40 @@ SF=${1:-1}
 
 echo "Generating TPC-DS database with scale factor $SF"
 
-mkdir -p data/tpcds/
-cd data/tpcds/
+mkdir -p "data/tpcds/sf$SF"
+cd "data/tpcds/"
 
 # Reuse existing datasets
-if [ ! -d "sf$SF" ]; then
+if [ -z "$(ls -A "sf$SF")" ]; then
   (
-    echo '7cca604ce38dbbdfbe1a3c849a413f14  tpcds-kit.zip' | md5sum --check --status 2>/dev/null || curl -OL --no-progress-meter https://db.in.tum.de/~schmidt/tpcds-kit.zip
-    echo '7cca604ce38dbbdfbe1a3c849a413f14  tpcds-kit.zip' | md5sum --check --status
-    unzip -q -u tpcds-kit.zip
+    if [ ! -d tpcds-kit ]; then
+      echo "Downloading tpcds-kit..."
+      curl -L -o tpcds-kit.zip https://github.com/lingo-db/tpcds-kit/archive/refs/heads/master.zip
+      unzip tpcds-kit.zip
+      mv tpcds-kit-master tpcds-kit
+      rm tpcds-kit.zip
+    else
+      echo "tpcds-kit already exists. Skipping download."
+    fi
 
     cd tpcds-kit/tools
     rm -rf ./*.dat
-    CPPFLAGS=-Wno-implicit-int make -sj "$(nproc)" dsdgen
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      make OS=MACOS MACOS_CFLAGS="-O3 -Wall -std=gnu90" -sj $(sysctl -n hw.logicalcpu) dsdgen # macOS
+    else
+      make OS=LINUX LINUX_CFLAGS="-O3 -Wall -std=gnu90" -sj $(nproc) dsdgen # Linux
+    fi
+
     ./dsdgen -FORCE -SCALE "$SF"
-    mkdir -p "../../sf$SF"
     for table in ./*.dat; do
-      sed 's/|$//' "$table" >"../../sf$SF/$table"
-      rm "$table"
+      # sed behaves differently on macOS and linux. Currently, there is no stable, portable command that works on both.
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' 's/|$//' "$table"  # macOS
+      else
+        sed -i 's/|$//' "$table"     # Linux
+      fi
+      mv "$table" "../../sf$SF/$table"
     done
   )
 fi
