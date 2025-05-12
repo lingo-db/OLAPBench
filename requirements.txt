@@ -15,7 +15,7 @@ simplejson
 
 
 # Umbra & Postgres
-psycopg2
+psycopg2-binary
 
 # ClickHouse
 clickhouse-connect
@@ -37,3 +37,6 @@ rich
 # HTTP Server
 flask
 flask-cors
+
+# Tabular
+tabulate
