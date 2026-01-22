@@ -52,8 +52,25 @@ class LingoDBDev(DBMS):
     def _create_table_statements(self, schema: dict) -> [str]:
         return sql.create_table_statements(schema)
 
+    def copy_statements_postgres_adapted(self, schema: dict, data_dir: str, supports_text: bool = True) -> [str]:
+        delimiter = schema["delimiter"]
+        format = schema["format"] if supports_text or schema["format"] != "text" else "csv"
+
+        null = f" null {sql.escape(schema['null'])}" if "null" in schema else ""
+        quote = f" quote {sql.escape(schema['quote'])}" if "quote" in schema else ""
+        csv_escape = f" escape '{schema['csv_escape']}'" if format == "csv" and "csv_escape" in schema else ""
+        header = " header" if "header" in schema and schema["header"] else ""
+
+        statements = []
+        for table in schema["tables"]:
+            if table.get("initially empty", False):
+                continue
+            statements.append(
+                f'copy {table["name"]} from \'{os.path.join(data_dir, table["file"])}\' delimiter \'{delimiter}\' {null}{quote}{csv_escape}{header};')
+
+        return statements
     def _copy_statements(self, schema: dict) -> [str]:
-        return sql.copy_statements_postgres(schema, self._data_dir, supports_text=False)
+        return self.copy_statements_postgres_adapted(schema, self._data_dir, supports_text=False)
 
     def _execute(self, query: str, fetch_result: bool, timeout: int = 0, fetch_result_limit: int = 0) -> Result:
         result = Result()
