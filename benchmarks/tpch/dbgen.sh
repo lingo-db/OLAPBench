@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-set -o xtrace
-
+set -x
 SF=${1:-1}
 
 echo "Generating TPC-H database with scale factor $SF"
@@ -24,8 +23,8 @@ if [ -z "$(ls -A "sf$SF")" ]; then
     fi
 
     ./dbgen -f -s $SF
-
     for table in ./*.tbl; do
+      chmod +r "$table"
       # sed behaves differently on macOS and linux. Currently, there is no stable, portable command that works on both.
       if [[ "$OSTYPE" == "darwin"* ]]; then
         sed -i '' 's/|$//' "$table"  # macOS
