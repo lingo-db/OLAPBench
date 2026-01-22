@@ -29,7 +29,7 @@ class LingoDBDev(DBMS):
         os.makedirs(self.db, exist_ok=True)
         command = f'{self.sql} {self.db}'
         self.process = Process(command, {"LINGODB_EXECUTION_MODE": "SPEED", "LINGODB_SQL_PROMPT": "0",
-                                         "LINGODB_SQL_REPORT_TIMES": "1"})
+                                         "LINGODB_SQL_REPORT_TIMES": "1",**self._settings})
         self.process.start()
         return self
     def __exit__(self, exc_type, exc_val, exc_tb):
