@@ -161,6 +161,9 @@ class DuckDB(DBMS):
                 output.execution.append(payload.get("execution"))
             if payload.get("compilation") is not None:
                 output.compilation.append(payload.get("compilation"))
+            extra = payload.get("extra")
+            if isinstance(extra, dict) and extra:
+                output.extra = {k: v for k, v in extra.items() if isinstance(v, (int, float))}
 
         if fetch_result:
             try:

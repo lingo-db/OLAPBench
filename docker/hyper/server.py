@@ -98,6 +98,7 @@ async def execute_query(payload: dict):
     total = None
     execution = None
     compilation = None
+    extra = {}
     try:
         with open(os.path.join(result_dir.name, "hyperd.log"), 'r') as log:
             for line in reversed(log.readlines()):
@@ -105,9 +106,42 @@ async def execute_query(payload: dict):
 
                 if entry["k"] == "query-end":
                     value = entry["v"]
-                    compilation = value['pre-execution']["parsing-time"] * 1000 + value['pre-execution']["compilation-time"] * 1000
-                    execution = value["execution-time"] * 1000
-                    total = value["elapsed"] * 1000
+                    pre_execution = value.get("pre-execution", {})
+                    execution_block = value.get("execution", {})
+
+                    if "parsing-time" in pre_execution and "compilation-time" in pre_execution:
+                        parsing_time = pre_execution["parsing-time"] * 1000
+                        compilation_time = pre_execution["compilation-time"] * 1000
+                        compilation = parsing_time + compilation_time
+                        extra["hyper_parsing_time"] = parsing_time
+                        extra["hyper_compilation_time"] = compilation_time
+
+                    # execution-time was a top-level field in older hyper versions;
+                    # newer versions report it as execution.elapsed.
+                    if "execution-time" in value:
+                        execution = value["execution-time"] * 1000
+                    elif "elapsed" in execution_block:
+                        execution = execution_block["elapsed"] * 1000
+
+                    if "elapsed" in value:
+                        total = value["elapsed"] * 1000
+
+                    if "physical-algebra-time" in pre_execution:
+                        extra["hyper_physical_algebra_time"] = pre_execution["physical-algebra-time"] * 1000
+                    if "elapsed" in pre_execution:
+                        extra["hyper_pre_execution_elapsed"] = pre_execution["elapsed"] * 1000
+                    if "time-to-schedule" in value:
+                        extra["hyper_time_to_schedule"] = value["time-to-schedule"] * 1000
+                    if "commit-time" in value:
+                        extra["hyper_commit_time"] = value["commit-time"] * 1000
+
+                    # Capture any other *-time fields under pre-execution we did not
+                    # explicitly name (e.g. additional phases reported by newer
+                    # hyper versions), so the CSV does not silently drop them.
+                    known = {"parsing-time", "compilation-time", "physical-algebra-time"}
+                    for k, v in pre_execution.items():
+                        if k.endswith("-time") and k not in known and isinstance(v, (int, float)):
+                            extra[f"hyper_pre_execution_{k.replace('-', '_')}"] = v * 1000
                     break
     except Exception:
         pass
@@ -122,7 +156,7 @@ async def execute_query(payload: dict):
             }
             f.write(json.dumps(result_data, use_decimal=True, default=sql_encoder, allow_nan=True))
 
-    return {"rows": rows, "error": error_message, "client_total": client_total, "total": total, "execution": execution, "compilation": compilation}
+    return {"rows": rows, "error": error_message, "client_total": client_total, "total": total, "execution": execution, "compilation": compilation, "extra": extra}
 
 
 if __name__ == "__main__":
