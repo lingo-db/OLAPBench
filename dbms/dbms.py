@@ -126,12 +126,21 @@ class DBMS(ABC):
         self._index = DBMS.Index.from_string(params.get("index", "primary"))
         self._version = params.get("version", "latest")
         self._umbra_planner = params.get("umbra_planner", False)
-        self._docker = docker.from_env()
+        # Lazily created on first access: local-binary systems (e.g. lingodbdev)
+        # never touch docker, so importing/connecting only when a container is
+        # actually needed lets those systems run without a docker daemon.
+        self._docker_client = None
         self._host_port = params.get('host_port', None)
 
         self._settings = settings
 
         self.container = None
+
+    @property
+    def _docker(self):
+        if self._docker_client is None:
+            self._docker_client = docker.from_env()
+        return self._docker_client
 
     @property
     @abstractmethod
