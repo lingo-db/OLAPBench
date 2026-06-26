@@ -1,0 +1,15 @@
+title: LingoDB GPU run
+repetitions: 5
+warmup: 2
+fetch_result: false
+output: results/gpu
+systems:
+  - title: LingoDB(gpu)
+    dbms: lingodbdev
+    parameter:
+      bin: /home/jungmair/lingodb-gpu/build/lingodb-gpu-release   # dir containing the `sql` binary
+      process_per_query: false      # warm/persistent — see below
+      quote_keywords: "date"        # only needed for SSB (its table is literally `date`)
+    settings:                        # passed verbatim as the child env (env is REPLACED, not merged)
+      LINGODB_EXECUTION_MODE: "GPU"
+      CUDA_PATH: "/usr/local/cuda-13"  # the GPU JIT shells out to ptxas; CUDA libs resolve via RUNPATH
