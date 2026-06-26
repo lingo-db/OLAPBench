@@ -1,0 +1,10 @@
+title: LingoDB GPU run
+repetitions: 5
+warmup: 2
+fetch_result: false
+output: results/gpu
+systems:
+  - title: LingoDB(gpu)
+    dbms: lingodbdev
+    parameter:
+      bin: /home/jungmair/lingo-db/build/lingodb-release
