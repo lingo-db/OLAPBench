@@ -1,0 +1,22 @@
+title: Sirius GPU run
+repetitions: 5
+warmup: 2          # first warmup run is cold (loads + converts columns to GPU); subsequent runs are warm
+fetch_result: false
+output: results/sirius
+benchmarks:
+  - name: tpch
+    scale: 10
+systems:
+  - title: Sirius(gpu)
+    dbms: sirius
+    parameter:
+      bin: /home/jungmair/sirius/cloned_repo/build/legacy-release/duckdb   # Sirius-enabled DuckDB binary
+      # GPU buffer-manager sizing (RTX 5090, 32 GB). SF1: '4 GB'/'8 GB' is plenty.
+      gpu_cache_size: "12 GB"        # raw cached column data
+      gpu_processing_size: "16 GB"   # query intermediates (hash tables, join/sort results)
+      # pinned_memory_size: "16 GB"  # defaults to gpu_processing_size
+      # use_pin_memory_for_caching: true  # cache in pinned host memory (exceed GPU mem, slower)
+  # CPU baseline (plain DuckDB on the same binary, no gpu_processing) for an
+  # apples-to-apples comparison — uncomment to run side by side.
+  # - title: DuckDB(cpu)
+  #   dbms: duckdb
