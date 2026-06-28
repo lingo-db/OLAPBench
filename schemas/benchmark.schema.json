@@ -36,7 +36,8 @@
             "umbra",
             "umbradev",
             "lingodbdev",
-            "sirius"
+            "sirius",
+            "heavydb"
           ]
         },
         "disabled": {

@@ -1,0 +1,36 @@
+title: HeavyDB GPU run
+repetitions: 5
+warmup: 2          # first warmup run is cold (compiles kernels + pulls columns onto the GPU); later runs are warm
+fetch_result: false
+output: results/heavydb
+benchmarks:
+  - name: tpch
+    scale: 10
+systems:
+  - title: HeavyDB(gpu)
+    dbms: heavydb
+    parameter:
+      # micromamba env that holds HeavyDB's runtime libraries (LLVM, Arrow, CUDA, ...).
+      mamba: /home/jungmair/heavydb/bin/micromamba
+      mamba_root: /home/jungmair/heavydb/mamba
+      env: hd-master
+      bin: /home/jungmair/heavydb/heavydb/build-cuda/bin   # CUDA build (use .../build/bin for a CPU build)
+      gpu: true
+      # allow_loop_joins: false   # HeavyDB rejects non-equi (loop) joins by default,
+                                   # so e.g. TPC-H Q21 is recorded as an error. Enabling
+                                   # lets it run, but a loop join can be catastrophically
+                                   # slow (Q21 effectively never finishes) — opt in only
+                                   # with a query timeout set.
+      # connection (defaults match a fresh HeavyDB install)
+      # port: 6274
+      # db: heavyai
+      # user: admin
+      # password: HyperInteractive
+      # Extra server flags, e.g. to size the GPU buffer pool on a smaller card:
+      # server_args: ["--gpu-buffer-mem-bytes", "25000000000"]
+  # CPU baseline (same binary, executor forced onto CPU) for an apples-to-apples
+  # comparison — uncomment to run side by side.
+  # - title: HeavyDB(cpu)
+  #   dbms: heavydb
+  #   parameter:
+  #     gpu: false
