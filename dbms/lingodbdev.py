@@ -81,6 +81,9 @@ class LingoDBDev(DBMS):
             for column in table['columns']:
                 # text is limited to 65KB replace with longtext
                 column['type'] = column['type'].replace('smallint', 'int')
+                # LingoDB maps bare `float`/`real` to 64-bit; `float(2)` is its
+                # spelling for a 32-bit single-precision float.
+                column['type'] = column['type'].replace('real', 'float(2)')
         return schema
 
     def _create_table_statements(self, schema: dict) -> [str]:

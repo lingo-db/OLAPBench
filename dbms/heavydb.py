@@ -24,6 +24,14 @@ DEFAULT_BIN = "/home/jungmair/heavydb/heavydb/build-cuda/bin"
 # heavysql with `-t` prints one line per successful statement:
 #   `Execution time: 22 ms, Total time: 23 ms`
 _TIMING_RE = re.compile(r"Execution time:\s*(\d+)\s*ms,\s*Total time:\s*(\d+)\s*ms")
+# heavysql's `Execution time` folds Calcite planning into execution, so it is not
+# comparable to the pure-execution figure the other engines report. The real
+# breakdown only lives in the server's debug-timer tree, logged at DEBUG1 to
+# <storage>/log/heavydb.INFO (one entry per statement):
+#   `  execute_rel_alg 1347... - total time 281 ms`   pure execution
+#   `  parse_to_ra     1347... - total time   6 ms`   Calcite planning
+_SERVER_EXEC_RE = re.compile(r"execute_rel_alg \S+ - total time (\d+) ms")
+_SERVER_PARSE_RE = re.compile(r"parse_to_ra \S+ - total time (\d+) ms")
 # A failed statement prints `SQL Error: <message>` to stderr (and the process
 # exits non-zero). Other stderr lines (CUDA_HOME notice, JVM WARNING, ...) are noise.
 _SQL_ERROR_RE = re.compile(r"^\s*(?:SQL\s+)?Error:\s*(.*)", re.IGNORECASE)
@@ -43,9 +51,12 @@ class HeavyDB(DBMS):
     repetitions stays GPU-resident across client invocations.
 
     Execution is forced onto the GPU (or CPU) with a leading `\\gpu` / `\\cpu`
-    client command. Timing is taken from the server-reported `Execution time`
-    line; there is no separate compilation time in the protocol (a cold run folds
-    codegen + JIT into `Execution time`, which the harness' warmup pass absorbs).
+    client command. Timing is read from the server's debug-timer tree in
+    <storage>/log/heavydb.INFO so HeavyDB stays comparable to the other engines:
+    `execute_rel_alg` (pure execution) maps to `execution` and `parse_to_ra`
+    (Calcite planning) to `compilation`. The heavysql client only reports a single
+    `Execution time` that folds planning into execution, so it is used solely as a
+    fallback when the server log cannot be read.
     """
 
     def __init__(self, benchmark: Benchmark, db_dir: str, data_dir: str, params: dict, settings: dict):
@@ -160,6 +171,12 @@ class HeavyDB(DBMS):
             "--http-port", str(self._http_port),
             "--calcite-port", str(self._calcite_port),
             "--allowed-import-paths", allowed_paths,
+            # --enable-debug-timer builds the per-query debug-timer tree;
+            # --log-severity DEBUG1 lets its `stacked_times` line (logged at
+            # DEBUG1 in QueryState.cpp) actually reach <storage>/log/heavydb.INFO,
+            # which is where _read_server_timings() picks up the real breakdown.
+            "--enable-debug-timer",
+            "--log-severity", "DEBUG1",
             *(["--allow-loop-joins"] if self._allow_loop_joins else []),
             *self._server_args,
         )
@@ -228,6 +245,10 @@ class HeavyDB(DBMS):
                 column["type"] = re.sub(
                     r"\b(?:var)?char\s*\(\s*\d+\s*\)", "TEXT",
                     column["type"], flags=re.IGNORECASE)
+                # HeavyDB spells the 32-bit single-precision float `FLOAT`
+                # (it has no `REAL` alias).
+                column["type"] = re.sub(
+                    r"\breal\b", "FLOAT", column["type"], flags=re.IGNORECASE)
         return schema
 
     def _create_table_statements(self, schema: dict) -> list[str]:
@@ -307,14 +328,62 @@ class HeavyDB(DBMS):
             return None, "", ""
         return proc.returncode, proc.stdout, proc.stderr
 
+    def _open_info_log(self):
+        """Open <storage>/log/heavydb.INFO (following the symlink) seeked to EOF.
+
+        Returns a file handle positioned at the current end so a subsequent
+        read() yields exactly the lines the server appends for the next query, or
+        None if the log is not available yet (e.g. during startup)."""
+        path = os.path.join(self._storage_dir, "log", "heavydb.INFO")
+        try:
+            fh = open(path, "r")
+            fh.seek(0, os.SEEK_END)
+            return fh
+        except OSError:
+            return None
+
+    @staticmethod
+    def _read_server_timings(fh, poll_timeout: float = 5.0):
+        """Read the debug-timer breakdown the server appended since _open_info_log.
+
+        The driver runs one heavysql per query serially, so everything appended to
+        the INFO log between seek-to-EOF and now belongs to this query. glog can
+        buffer briefly, so poll until the `execute_rel_alg` line shows up (it is
+        the last of the tree to be written). Returns (execution_ms, compilation_ms)
+        summed across the region, or (None, None) if nothing was found in time."""
+        if fh is None:
+            return None, None
+        try:
+            deadline = time.time() + poll_timeout
+            text = ""
+            while True:
+                text += fh.read()
+                exec_matches = _SERVER_EXEC_RE.findall(text)
+                if exec_matches:
+                    parse_matches = _SERVER_PARSE_RE.findall(text)
+                    exec_ms = sum(float(m) for m in exec_matches)
+                    parse_ms = sum(float(m) for m in parse_matches) if parse_matches else None
+                    return exec_ms, parse_ms
+                if time.time() >= deadline:
+                    return None, None
+                time.sleep(0.02)
+        finally:
+            fh.close()
+
     def _run(self, script: str, timeout: int = 0) -> Result:
         result = Result()
+
+        # Capture the server log region this query appends (only meaningful for
+        # benchmark queries; loading statements produce no debug-timer tree).
+        log_fh = self._open_info_log() if self._query_phase else None
 
         begin = time.time()
         rc, stdout, stderr = self._heavysql(script, timeout=timeout)
         client_total = (time.time() - begin) * 1000
 
         if rc is None:  # client killed by timeout
+            if log_fh is not None:
+                log_fh.close()
             logger.log_warn_verbose("HeavyDB query timed out")
             result.state = Result.TIMEOUT
             result.message = "olapbench: query timeout"
@@ -327,6 +396,8 @@ class HeavyDB(DBMS):
         explicit, other = self._stderr_lines(stderr)
         # A query failed if heavysql exited non-zero or printed an `Error:` line.
         if rc != 0 or explicit:
+            if log_fh is not None:
+                log_fh.close()
             message = "\n".join(explicit) or "\n".join(other) or "HeavyDB query failed"
             logger.log_error_verbose(message)
             result.message = message
@@ -335,15 +406,33 @@ class HeavyDB(DBMS):
 
         match = _TIMING_RE.search(stdout)
         if match:
-            exec_ms = float(match.group(1))
+            heavysql_exec_ms = float(match.group(1))
             total_ms = float(match.group(2))
         else:
             # No timing line (e.g. CREATE/COPY during loading): fall back to the
             # measured wall-clock so loading still reports a time.
-            exec_ms = total_ms = client_total
+            heavysql_exec_ms = total_ms = client_total
+
+        # Prefer the server's debug-timer breakdown: `execute_rel_alg` is pure
+        # execution (comparable to the other engines' `execution`) and
+        # `parse_to_ra` is Calcite planning, which heavysql otherwise hides inside
+        # `Execution time`. Fall back to the heavysql figure (planning folded in)
+        # only when the server log could not be read.
+        server_exec_ms, server_parse_ms = self._read_server_timings(log_fh)
+        if server_exec_ms is not None:
+            exec_ms = server_exec_ms
+            compilation_ms = server_parse_ms if server_parse_ms is not None else 0.0
+        else:
+            if self._query_phase:
+                logger.log_warn_verbose(
+                    "HeavyDB: no debug-timer line in server log; "
+                    "falling back to heavysql execution time (includes planning)")
+            exec_ms = heavysql_exec_ms
+            compilation_ms = 0.0
 
         result.client_total.append(client_total)
         result.execution.append(exec_ms)
+        result.compilation.append(compilation_ms)
         result.total.append(total_ms)
         result.rows = -1  # heavysql `-q` suppresses the row count
         return result

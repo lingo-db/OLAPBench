@@ -158,6 +158,7 @@ def benchmarks() -> dict[str, BenchmarkDescription]:
     from benchmarks.clickbench import clickbench
     from benchmarks.job import job
     from benchmarks.ssb import ssb
+    from benchmarks.ssbsimplified import ssbsimplified
     from benchmarks.tpcds import tpcds
     from benchmarks.tpch import tpch
     from benchmarks.stackoverflow import stackoverflow
@@ -166,6 +167,7 @@ def benchmarks() -> dict[str, BenchmarkDescription]:
         clickbench.ClickBenchDescription,
         job.JOBDescription,
         ssb.SSBDescription,
+        ssbsimplified.SSBSimplifiedDescription,
         stackoverflow.StackOverflowDescription,
         tpcds.TPCDSDescription,
         tpch.TPCHDescription
