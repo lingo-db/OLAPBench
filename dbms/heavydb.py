@@ -83,6 +83,8 @@ class HeavyDB(DBMS):
         # Seconds to wait for the server to become query-ready (GPU JIT warmup on
         # first boot can take ~20 s).
         self._startup_timeout = int(params.get("startup_timeout", 180))
+        self._init_timeout = int(params.get("init_timeout", 300))
+
         # Allow loop (non-equi) joins. HeavyDB rejects queries that need them by
         # default (e.g. TPC-H Q21), so such queries are recorded as errors. Off by
         # default: enabling lets them run but a loop join can be catastrophically
@@ -133,6 +135,13 @@ class HeavyDB(DBMS):
     def _mamba_env(self) -> dict:
         env = dict(os.environ)
         env["MAMBA_ROOT_PREFIX"] = self._mamba_root
+        # GDAL/PROJ need their data files (proj.db, gdal data) to do coordinate
+        # transforms; point at the env's share dirs in case the env's activation
+        # scripts don't fire under `micromamba run`.
+        prefix = os.path.join(self._mamba_root, "envs", self._env)
+        env["PROJ_DATA"] = os.path.join(prefix, "share", "proj")   # PROJ 9.x
+        env["PROJ_LIB"] = os.path.join(prefix, "share", "proj")    # older PROJ/GDAL
+        env["GDAL_DATA"] = os.path.join(prefix, "share", "gdal")
         return env
 
     def _init_storage(self):
@@ -145,19 +154,22 @@ class HeavyDB(DBMS):
         logger.log_verbose_dbms("Initializing HeavyDB storage directory", self)
         command = self._mamba_run(self._initheavy_bin, self._storage_dir)
         logger.log_verbose_process(f"Starting command `{' '.join(command)}`")
-        proc = subprocess.Popen(command, env=self._mamba_env(),
+        # initheavy creates catalogs/ EARLY but writes the system catalog
+        # (mapd_users, ...) later, then exits 0. Wait for it to EXIT — not for
+        # catalogs/ to appear — or the catalog is left half-written ("no such
+        # table: mapd_users"). The gap is large on slow / network-attached storage.
+        proc = subprocess.Popen(command, env=self._mamba_env(), start_new_session=True,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
-            for _ in range(60):
-                if os.path.isdir(catalogs) and os.listdir(catalogs):
-                    break
-                if proc.poll() is not None:
-                    break
-                time.sleep(1)
-        finally:
+            rc = proc.wait(timeout=self._init_timeout)
+        except subprocess.TimeoutExpired:
             self._terminate(proc)
+            raise Exception(f"HeavyDB storage init did not finish within "
+                            f"{self._init_timeout}s (slow storage? raise init_timeout)")
+        if rc != 0:
+            raise Exception(f"initheavy failed (exit code {rc})")
         if not (os.path.isdir(catalogs) and os.listdir(catalogs)):
-            raise Exception("HeavyDB storage initialization failed")
+            raise Exception("HeavyDB storage initialization produced no catalog")
 
     def _start_server(self):
         # HeavyDB refuses `COPY FROM` for paths outside a whitelist; allow the
